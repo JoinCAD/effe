@@ -1,6 +1,7 @@
 package effe
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 
@@ -9,7 +10,7 @@ import (
 
 type evalTestCase struct {
 	formula               string
-	expected              *value
+	expected              value
 	expectedErrorFragment string
 }
 
@@ -24,7 +25,7 @@ func (s stubbedRange) iterate(r rangeSpec, closure func(v value) error) error {
 	for c := concreteRange.cLo; c <= concreteRange.cHi; c++ {
 		for r := concreteRange.rLo; r <= concreteRange.rHi; r++ {
 			v := apd.New(int64(10*c+r), 0)
-			err := closure(value{numberValue: v})
+			err := closure(numberValue{v: v})
 			if err != nil {
 				return err
 			}
@@ -36,7 +37,7 @@ func (s stubbedRange) iterate(r rangeSpec, closure func(v value) error) error {
 var cases []evalTestCase = []evalTestCase{
 	{
 		formula:  "sum(A1:A10)",
-		expected: &value{numberValue: apd.New(560, 0)},
+		expected: numberValue{v: apd.New(560, 0)},
 	},
 }
 
@@ -56,8 +57,10 @@ func TestEval(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Error running: %v", err)
 		}
-		if !result.equals(*c.expected) {
-			t.Fatalf("Expected %v, but got %v", *c.expected, result)
+		fmt.Println("Got", result, c.expected)
+		if !equals(result, c.expected) {
+			t.Fatalf("Expected %v, but got %v", c.expected, result)
 		}
 	}
+
 }
