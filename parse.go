@@ -35,6 +35,8 @@ func (pe *parseError) Error() string {
 func Parse(r io.RuneScanner) (node, []parseError, error) {
 	t := newTokenizer(r)
 	t.scanCell()
+
+	return node{}, []parseError{}, nil
 }
 
 const (
@@ -65,6 +67,7 @@ type tokenizer struct {
 	count  uint
 	r      io.RuneScanner
 	tokens []token
+	parseErrors []parseError
 }
 
 func newTokenizer(r io.RuneScanner) tokenizer {
@@ -327,9 +330,9 @@ func newParser(tokens []token) *parser {
 	}
 }
 
-func (p *parser) read() (token, bool) {
+// func (p *parser) read() (token, bool) {
 
-}
+// }
 
 func (p *parser) unread() {
 
@@ -342,18 +345,21 @@ func (p *parser) parse() {
 var rangeRegex = regexp.MustCompile("^([a-zA-Z]+)?([0-9]+)?:([a-zA-Z]+)?([0-9]+)?$")
 
 func (p *parser) parseFunction() (node, err) {
-
+	return node{}, nil
 }
 
 func (p *parser) createLiteralNode(t token) node {
-	switch t.typ {
-	case TokenTypeRange:
-		regexp.
-	case TokenTypeNumber:
-		return node{
-			typ: 
-		}
-	}
+	// switch t.typ {
+	// case TokenTypeRange:
+	// 	regexp.
+	// case TokenTypeNumber:
+	// 	return node{
+	// 		typ: 
+	// 	}
+	// }
+
+		
+	return node{}
 }
 
 func (p *parser) parseExpression() err {
