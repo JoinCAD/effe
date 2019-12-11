@@ -40,14 +40,6 @@ func (v nullValue) implementsCellValue() bool {
 	return true
 }
 
-type rangeValue struct {
-	r rangeSpec
-}
-
-func (v rangeValue) implementsCellValue() bool {
-	return true
-}
-
 type errValue struct {
 	e formulaError
 }
@@ -76,11 +68,6 @@ func equals(v1 value, v2 value) bool {
 		case stringValue:
 			return v1c.s == v2c.s
 		}
-	case rangeValue:
-		switch v2c := v2.(type) {
-		case rangeValue:
-			return v1c.r == v2c.r
-		}
 	case nullValue:
 		switch v2.(type) {
 		case nullValue:
@@ -106,9 +93,9 @@ type session struct {
 	functions map[string]formulaImplementation
 }
 
-func (s session) eval(n node) (value, error) {
-	switch n.typ {
-	case Function:
+func (s session) eval(n *node) (value, error) {
+	switch n.kind {
+	case NodeKindFunction:
 		if f, ok := s.functions[strings.ToLower(n.value)]; ok {
 			args := []value{}
 			for _, c := range n.children {
@@ -121,12 +108,10 @@ func (s session) eval(n node) (value, error) {
 			return f(s.rp, args)
 		}
 
-		return nullValue{}, fmt.Errorf("Unknown function")
-	case Range:
-		return rangeValue{
-			r: n.rangeSpec,
-		}, nil
-	case Literal:
+		return nullValue{}, fmt.Errorf("Unknown function: '%v'", strings.ToLower(n.value))
+
+	case NodeKindLiteral:
+		// TODO: ranges
 		// TODO: don't discard condition
 		d, _, err := apd.BaseContext.NewFromString(n.value)
 		if err != nil {
