@@ -3,16 +3,7 @@ package effe
 import (
 	"strings"
 	"testing"
-
-	"github.com/cockroachdb/apd"
 )
-
-type evalTestCase struct {
-	name                  string
-	formula               string
-	expected              value
-	expectedErrorFragment string
-}
 
 // Stubbed range implements a 10x10 range where each cell contains
 // a number determined by position: column# * 10 + row# * 1
@@ -77,7 +68,7 @@ var tokenCases []tokenizeTestCase = []tokenizeTestCase{
 func TestTokenize(t *testing.T) {
 	for _, c := range tokenCases {
 		t.Run(c.name, func(t *testing.T) {
-			tokenizer := newTokenizer(strings.NewReader(c.cell))
+			tokenizer := newParser(strings.NewReader(c.cell))
 			tokenizer.scanCell()
 			if len(tokenizer.parseErrors) != 0 {
 				t.Errorf("Got parse errors: %v", tokenizer.parseErrors)
@@ -97,8 +88,8 @@ func assertNodeEqual(t *testing.T, n *node, k nodeKind, v string) {
 	if n.kind != k {
 		t.Errorf("Expected node kind %v, but got '%v'", k, n.kind)
 	}
-	if n.value != v {
-		t.Errorf("Expected node value %v, but got '%v'", v, n.value)
+	if n.rawValue != v {
+		t.Errorf("Expected node value %v, but got '%v'", v, n.rawValue)
 	}
 }
 
@@ -134,37 +125,4 @@ func TestParse(t *testing.T) {
 			c.validate(t, node, errors)
 		})
 	}
-}
-
-var cases []evalTestCase = []evalTestCase{
-	{
-		name:     "simple sum",
-		formula:  "=sum(A1:A10)",
-		expected: numberValue{v: apd.New(560, 0)},
-	},
-}
-
-func TestEval(t *testing.T) {
-	s := session{
-		rp:        nil,
-		functions: map[string]formulaImplementation{
-			// "sum": sum,
-		},
-	}
-	for _, c := range cases {
-		t.Run(c.name, func(t *testing.T) {
-			n, _, err := Parse(strings.NewReader(c.formula))
-			if err != nil {
-				t.Fatalf("Error parsing: %v", err)
-			}
-			result, err := s.eval(n)
-			if err != nil {
-				t.Fatalf("Error running: %v", err)
-			}
-			if !equals(result, c.expected) {
-				t.Fatalf("Expected %v, but got %v", c.expected, result)
-			}
-		})
-	}
-
 }

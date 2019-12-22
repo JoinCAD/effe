@@ -10,7 +10,8 @@ import (
 
 type node struct {
 	kind          nodeKind
-	value         string
+	rawValue      string
+	literalValue  Value
 	children      []*node
 	operatorValue operator
 }
@@ -53,22 +54,19 @@ func (pe *parseError) Error() string {
 	return pe.message
 }
 
-func Parse(r io.RuneScanner) (*node, []parseError, error) {
-	var t *tokenizer
+func Parse(r io.RuneScanner, ctx Context) (*node, []parseError, error) {
 	var p *parser
 	defer func() {
 		if err := recover(); err != nil {
 			fmt.Println("Panic parsing: ", err)
-			fmt.Println("Tokenizer: ", *t)
 			fmt.Println("Parser: ", *p)
 			debug.PrintStack()
 		}
 	}()
-	t = newTokenizer(r)
-	t.scanCell()
-	p = newParser(t.tokens)
+	p = newParser(r, ctx)
+	p.scanCell()
 	p.parse()
-	return p.next[0], t.parseErrors, nil
+	return p.next[0], p.parseErrors, nil
 }
 
 const (
@@ -94,42 +92,25 @@ type token struct {
 	operatorValue operator
 }
 
-type tokenizer struct {
-	count       uint
-	r           io.RuneScanner
-	tokens      []token
-	parseErrors []parseError
-}
-
-func newTokenizer(r io.RuneScanner) *tokenizer {
-	return &tokenizer{
-		count:       0,
-		r:           r,
-		tokens:      []token{},
-		parseErrors: []parseError{},
-	}
-}
-
-func (t *tokenizer) read() (r rune, cont bool) {
-	c, _, err := t.r.ReadRune()
-	t.count = t.count + 1
+func (p *parser) read() (r rune, cont bool) {
+	c, _, err := p.r.ReadRune()
+	p.count = p.count + 1
 	if err != nil && err != io.EOF {
-		t.parseErrors = append(t.parseErrors, parseError{t.count, "unexpected error reading: " + err.Error()})
-		log.Println("Error reading", err)
+		p.parseErrors = append(p.parseErrors, parseError{p.count, "unexpected error reading: " + err.Error()})
 		return 0, false
 	}
 	return c, err != io.EOF
 }
 
-func (t *tokenizer) unread() {
-	err := t.r.UnreadRune()
-	t.count = t.count - 1
+func (p *parser) unread() {
+	err := p.r.UnreadRune()
+	p.count = p.count - 1
 	if err != nil {
-		t.parseErrors = append(t.parseErrors, parseError{t.count, "unexpected error unreading: " + err.Error()})
+		p.parseErrors = append(p.parseErrors, parseError{p.count, "unexpected error unreading: " + err.Error()})
 	}
 }
 
-func (t *tokenizer) accumulateToken(v string, typ string) {
+func (t *parser) accumulateToken(v string, typ string) {
 	token := token{
 		value: v,
 		typ:   typ,
@@ -142,7 +123,7 @@ func (t *tokenizer) accumulateToken(v string, typ string) {
 	t.tokens = append(t.tokens, token)
 }
 
-func (t *tokenizer) scanCell() {
+func (t *parser) scanCell() {
 	r, _ := t.read()
 	if r != '=' {
 		s := []rune{r}
@@ -156,7 +137,7 @@ func (t *tokenizer) scanCell() {
 	}
 }
 
-func (t *tokenizer) scanFormula() {
+func (t *parser) scanFormula() {
 	for t.scanFormulaToken() {
 	}
 }
@@ -165,7 +146,7 @@ func isWhitespace(r rune) bool {
 	return r == ' ' || r == '\t' || r == '\n' || r == '\r'
 }
 
-func (t *tokenizer) consumeWhiteSpace() bool {
+func (t *parser) consumeWhiteSpace() bool {
 	var r rune
 	var cont bool
 	for r, cont = t.read(); isWhitespace(r); r, cont = t.read() {
@@ -180,7 +161,7 @@ func (t *tokenizer) consumeWhiteSpace() bool {
 	return true
 }
 
-func (t *tokenizer) scanRepeated(predicate func(rune) bool) string {
+func (t *parser) scanRepeated(predicate func(rune) bool) string {
 	runes := []rune{}
 	cont := true
 	var r rune
@@ -198,15 +179,15 @@ func (t *tokenizer) scanRepeated(predicate func(rune) bool) string {
 	return string(runes)
 }
 
-func (t *tokenizer) scanCharacters() string {
+func (t *parser) scanCharacters() string {
 	return t.scanRepeated(unicode.IsLetter)
 }
 
-func (t *tokenizer) scanDigits() string {
+func (t *parser) scanDigits() string {
 	return t.scanRepeated(unicode.IsDigit)
 }
 
-func (t *tokenizer) dropIfPresent(r rune) {
+func (t *parser) dropIfPresent(r rune) {
 	c, _ := t.read()
 	if c == r {
 		return
@@ -215,7 +196,7 @@ func (t *tokenizer) dropIfPresent(r rune) {
 }
 
 // Expects either 'A1' or '1' leading string.
-func (t *tokenizer) scanRangeSecondHalf(leading string) bool {
+func (t *parser) scanRangeSecondHalf(leading string) bool {
 	// TODO: dropping out '$' mean that the parsed representation can be no help in moving formulas around.
 	t.dropIfPresent('$')
 	rest := t.scanCharacters()
@@ -228,7 +209,7 @@ func (t *tokenizer) scanRangeSecondHalf(leading string) bool {
 }
 
 // given a leading column, scan the rest of a range token (digits)
-func (t *tokenizer) scanRange(leading string) bool {
+func (t *parser) scanRange(leading string) bool {
 	rest := t.scanDigits()
 	leading = leading + rest
 	r, cont := t.read()
@@ -246,7 +227,7 @@ func (t *tokenizer) scanRange(leading string) bool {
 	}
 }
 
-func (t *tokenizer) scanFormulaToken() bool {
+func (t *parser) scanFormulaToken() bool {
 	if !t.consumeWhiteSpace() {
 		fmt.Println("falling from consumeWhitespace")
 		return false
@@ -360,21 +341,32 @@ func (t *tokenizer) scanFormulaToken() bool {
 }
 
 type parser struct {
+	count       uint
+	r           io.RuneScanner
+	parseErrors []parseError
+	// TODO: we can get rid of this, and parse the tokens as they come "off the line".
+	// Leaving this in because we can have tests that focus on tokenization when this is easily
+	// inspectable
+	tokens []token
+	// position in token stream
 	position      int
-	tokens        []token
-	parseErrors   []parseError
 	operator      []token
 	next          []*node
 	argCountStack []int
 	// Used to distinguish infix and unary minus
 	infix bool
+	// Used to populate literals
+	c Context
 }
 
-func newParser(tokens []token) *parser {
+func newParser(r io.RuneScanner, ctx Context) *parser {
 	return &parser{
 		position:    0,
-		tokens:      tokens,
+		count:       0,
+		r:           r,
+		tokens:      []token{},
 		parseErrors: []parseError{},
+		c:           ctx,
 	}
 }
 
@@ -382,13 +374,13 @@ func (p *parser) more() bool {
 	return p.position < len(p.tokens)
 }
 
-func (p *parser) read() token {
+func (p *parser) readToken() token {
 	var t = p.tokens[p.position]
 	p.position++
 	return t
 }
 
-func (p *parser) unread() {
+func (p *parser) unreadToken() {
 	if p.position == 0 {
 		panic("cannot unread past start of tokens")
 	}
@@ -508,17 +500,33 @@ func leftAssociative(o operator) bool {
 // TODO: parse numbers
 // TODO: parse ranges
 // TODO: parse logical and text?
-func buildSimpleNode(t token) *node {
+func (p *parser) buildSimpleNode(t token) *node {
 	switch t.typ {
 	case TokenTypeNumber:
+		// So parsing depends on our numeric model?
+		n, err := p.c.Numbers.ParseNumber(t.value)
+		// TODO: decorate nodes with position
+		if err != nil {
+			p.parseErrors = append(p.parseErrors, parseError{0, err.Error()})
+		}
 		return &node{
-			kind:  NodeKindLiteral,
-			value: t.value,
+			kind:         NodeKindLiteral,
+			literalValue: NumberValue(n),
 		}
 	case TokenTypeRange:
 		return &node{
-			kind:  NodeKindLiteral,
-			value: t.value,
+			kind:         NodeKindLiteral,
+			literalValue: RangeValue(p.c.Ranges.ParseRange(t.value)),
+		}
+	case TokenTypeLogical:
+		return &node{
+			kind:         NodeKindLiteral,
+			literalValue: LogicalValue(t.value == "true"),
+		}
+	case TokenTypeText:
+		return &node{
+			kind:         NodeKindLiteral,
+			literalValue: TextValue(t.value),
 		}
 	case TokenTypeNoop:
 		return &node{
@@ -544,12 +552,12 @@ func (p *parser) output(t token) {
 	// If the last one was a range (or a formula), implicitly create a ' ' intersection operator
 	if t.typ != TokenTypeNoop && t.typ != TokenTypeFunction && len(p.next) > 0 && p.next[len(p.next)-1].kind == NodeKindHole {
 		// Fill the hole.
-		p.next[len(p.next)-1] = buildSimpleNode(t)
+		p.next[len(p.next)-1] = p.buildSimpleNode(t)
 		return
 	}
 
 	if t.typ == TokenTypeRange && p.next[len(p.next)-1].kind != NodeKindHole {
-		p.next = append(p.next, buildSimpleNode(t))
+		p.next = append(p.next, p.buildSimpleNode(t))
 		p.outputOperator(Intersection)
 		return
 	}
@@ -559,7 +567,7 @@ func (p *parser) output(t token) {
 		t.typ == TokenTypeLogical ||
 		t.typ == TokenTypeText ||
 		t.typ == TokenTypeNoop {
-		p.next = append(p.next, buildSimpleNode(t))
+		p.next = append(p.next, p.buildSimpleNode(t))
 	}
 
 	if t.typ == TokenTypeFunction {
@@ -570,8 +578,8 @@ func (p *parser) output(t token) {
 		p.argCountStack = p.argCountStack[:len(p.argCountStack)-1]
 
 		n := &node{
-			kind:  NodeKindFunction,
-			value: t.value,
+			kind:     NodeKindFunction,
+			rawValue: t.value,
 		}
 		n.children = make([]*node, nargs)
 		copy(n.children, p.next[len(p.next)-nargs:])
@@ -587,7 +595,7 @@ func (p *parser) output(t token) {
 func (p *parser) parse() {
 	// Shunting yard algorithm
 	for p.more() {
-		t := p.read()
+		t := p.readToken()
 		switch t.typ {
 		// Values
 		case TokenTypeText:
@@ -609,7 +617,7 @@ func (p *parser) parse() {
 				// ERROR
 			}
 			// Drop the open, we'll treat it as being subsumed into the function
-			p.read()
+			p.readToken()
 			p.pushOperator(t)
 			p.argCountStack = append(p.argCountStack, 1)
 			// Placeholder in case we get no arguments
